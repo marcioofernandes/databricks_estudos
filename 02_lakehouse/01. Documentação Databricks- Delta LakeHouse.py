@@ -74,3 +74,4 @@
 # MAGIC %md
 # MAGIC ##### varias ações 
 # MAGIC ![](https://www.databricks.com/wp-content/uploads/2019/08/image6-1.png)
+
