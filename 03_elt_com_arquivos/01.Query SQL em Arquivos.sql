@@ -8,19 +8,20 @@
 -- MAGIC %md
 -- MAGIC ### **Querys em Arquivos**
 -- MAGIC
--- MAGIC Algumas formas de Se criar consulta traves do arquivo 
+-- MAGIC Digamos que você tem arquivos salvos em um bucket, não são tabelas, são arquivos, porém antes de transformar eles em tabela, você precisa realizar consultas nesses arquivos, é possível fazer via python, pyspark, mas durante este notebook iremos focar em como fazer o ETL com SQL 
+-- MAGIC
+-- MAGIC A estrutura básica da query é: 
 -- MAGIC
 -- MAGIC SELECT * FROM formato_arquivo.`/path/to/file`
 -- MAGIC
 -- MAGIC - **formato_arquivo**: Exemplo Json,parquet,CSV,TSV,txt
 -- MAGIC - **/path/to/file**:   Caminho da pasta ou do arquivo
 -- MAGIC
--- MAGIC Se dentro da mesma pasta tiver varios arquivos de formatos diferentes  voce pode determinar para pegar dentro da pasta só de um formato desejado 
--- MAGIC Exemplo: file_*.json
+-- MAGIC Se dentro da pasta existir diversos arquivos diferentes você pode definir a consulta com o path final do arquivo, exemplo `file.json` ou agregar todos os arquivos em uma vizualição única passando apenas o path da pasta. 
 -- MAGIC
--- MAGIC Ou capturar uma pasta que dentro tenha varios arquios desde que sja no mesmo schema
+-- MAGIC **nota**: Para fazer isso, todos os arquivos da pasta devem conter o mesmo schema. 
 -- MAGIC
--- MAGIC Exemplo:/path/dir
+-- MAGIC
 -- MAGIC
 -- MAGIC
 
@@ -93,6 +94,12 @@ SELECT * FROM comparison_doc;
 
 -- COMMAND ----------
 
+-- MAGIC %md
+-- MAGIC A pasta **ls 'dbfs:/databricks-datasets'** é pública e contém diversos datasets para treinos, pode seguir com os comandos abaixo que irá funcionar
+-- MAGIC
+
+-- COMMAND ----------
+
 -- MAGIC %fs
 -- MAGIC ls 'dbfs:/databricks-datasets'
 
@@ -137,6 +144,11 @@ select * from parquet.`dbfs:/databricks-datasets/credit-card-fraud/data/part-000
 -- COMMAND ----------
 
 -- MAGIC %python
+-- MAGIC dbutils.fs.ls("/databricks-datasets")
+
+-- COMMAND ----------
+
+-- MAGIC %python
 -- MAGIC #Datasets para treino '/databricks-datasets'
 -- MAGIC display(dbutils.fs.ls('/databricks-datasets'))
 
@@ -148,7 +160,16 @@ select * from parquet.`dbfs:/databricks-datasets/credit-card-fraud/data/part-000
 
 -- COMMAND ----------
 
--- ler simples 
+-- MAGIC %md
+-- MAGIC O comando de SQL básico para ler os arquivos é sempre o mesmo, basta trocar o formato da extensão após o `from`. 
+-- MAGIC
+-- MAGIC Porém no caso dos arquivos .csv (e alguns outros) o comando não funciona direito, ao rodar a célula abaixo vai notar que: 
+-- MAGIC
+-- MAGIC 1. os nomes das colunas ficaram errados, na verdade os nomes das colunas foram atribuidas como primeira linha e gerado outros nomes. 
+-- MAGIC 2. Os datatypes ficaram todos como string 
+
+-- COMMAND ----------
+
 select * from csv.`dbfs:/databricks-datasets/bikeSharing/data-001/day.csv`
 
 -- COMMAND ----------
@@ -192,43 +213,48 @@ select count(*) from csv.`dbfs:/databricks-datasets/bikeSharing/data-001/*.csv`
 
 -- COMMAND ----------
 
--- opção read files read_files + Opções
-select * from read_files(
-    'dbfs:/databricks-datasets/bikeSharing/data-001/*.csv',
-  format => 'csv',
-  header => true
-)
-
-
--- COMMAND ----------
-
--- opção read files read_files + Opções + inferindo Schema
-select * from read_files(
-    'dbfs:/databricks-datasets/bikeSharing/data-001/*.csv',
+-- Base para ler arquivos csv, nem sempre precisa passar todas configs 
+-- mode "FAILFAST" aborts file parsing with a RuntimeException if malformed lines are encountered
+SELECT * FROM read_files(
+  'abfss://<bucket>@<storage-account>.dfs.core.windows.net/<path>/<file>.csv',
   format => 'csv',
   header => true,
-  inferschema => true
-)
-
+  mode => 'FAILFAST', 
+  schema => 'id string, date date, event_time timestamp')
 
 -- COMMAND ----------
 
--- opção read files read_files + Opções + inferindo Schema manualmente
-select 
-  instant,
-  dteday,
-  season
-from 
-read_files(
+-- Aqui a grande diferença é que ao invés de passarmos o format após o FROM, passamos o "read_file" e todas as configuração dentro do parenteses 
+
+select * from read_files(
+    'dbfs:/databricks-datasets/bikeSharing/data-001/*.csv', -- primeiro vem o path do arquivo 
+    format => 'csv', -- depois colocamos o formato, podendo ser qualquer outro
+    header => true -- aqui estamos falando para o databricks interpretar a primeira linha como cabeçalho
+)
+
+-- nota que ele inferiu os data types automaticamente. 
+
+-- COMMAND ----------
+
+select * from read_files(
     'dbfs:/databricks-datasets/bikeSharing/data-001/*.csv',
-  format => 'csv',
-  header => true,
-  schema => 'instant string, dteday date, season double'
+    format => 'csv', 
+    header => true, 
+    inferschema => true -- aqui estamos declarando que é para ele inferir o schema, mas eu ACHO que ele ja faz isso por padrão, como vimos na célula acima 
 )
 
 -- COMMAND ----------
 
--- read_files com Json  'dbfs:/databricks-datasets/iot/iot_devices.json'
+select * from read_files(
+    'dbfs:/databricks-datasets/bikeSharing/data-001/*.csv', 
+    format => 'csv', 
+    header => true, 
+    schema => 'instant string, dteday date, season double' -- Neste caso estamos declarando o schema manualmente
+)
+
+-- COMMAND ----------
+
+-- read_files utilizando o format json
 select * from read_files ('dbfs:/databricks-datasets/iot/iot_devices.json',
    format => 'json'
 
@@ -237,7 +263,13 @@ select * from read_files ('dbfs:/databricks-datasets/iot/iot_devices.json',
 
 -- COMMAND ----------
 
--- read file com opção de escolher arquivos de uma pasta 
 SELECT *
-FROM read_files('dbfs:/databricks-datasets/iot/*.json')
+FROM read_files('dbfs:/databricks-datasets/iot/*.json') -- Também é possível ler a pasta inteira dos arquivos 
 WHERE lcd = 'red'
+
+-- COMMAND ----------
+
+-- MAGIC %md
+-- MAGIC **Nota importante** 
+-- MAGIC
+-- MAGIC Aqui não criamos nenhuma tabela, isso pode confundir pois a visualização parece uma, e estamos usando SQL, mas na verdade estamos apenas lendo os arquivos, e fazendo consultas em cima deles 
